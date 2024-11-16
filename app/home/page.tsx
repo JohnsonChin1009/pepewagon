@@ -8,6 +8,9 @@ export default function HomePage() {
             <div className="py-10">
                 <Button>Upload Picture</Button>
             </div>
+            <div>
+                <Button>Claim PPWG Tokens</Button>
+            </div>
         </>
     )
 }
