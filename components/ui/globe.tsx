@@ -43,18 +43,18 @@ export default function Globe({
   let phi = 0;
   let width = 0;
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pointerInteracting = useRef(null);
-  const pointerInteractionMovement = useRef(0);
-  const [r, setR] = useState(0);
+  const pointerInteracting = useRef<number | null>(null); // Refers to the x-coordinate of interaction
+  const pointerInteractionMovement = useRef<number>(0);
+  const [r, setR] = useState<number>(0);
 
-  const updatePointerInteraction = (value: any) => {
+  const updatePointerInteraction = (value: number | null) => {
     pointerInteracting.current = value;
     if (canvasRef.current) {
-      canvasRef.current.style.cursor = value ? "grabbing" : "grab";
+      canvasRef.current.style.cursor = value !== null ? "grabbing" : "grab";
     }
   };
 
-  const updateMovement = (clientX: any) => {
+  const updateMovement = (clientX: number) => {
     if (pointerInteracting.current !== null) {
       const delta = clientX - pointerInteracting.current;
       pointerInteractionMovement.current = delta;
@@ -64,13 +64,15 @@ export default function Globe({
 
   const onRender = useCallback(
     (state: Record<string, any>) => {
+      const typedState = state as { phi: number; width: number; height: number }; // Type casting
       if (!pointerInteracting.current) phi += 0.005;
-      state.phi = phi + r;
-      state.width = width * 2;
-      state.height = width * 2;
+      typedState.phi = phi + r;
+      typedState.width = width * 2;
+      typedState.height = width * 2;
     },
     [r],
   );
+  
 
   const onResize = () => {
     if (canvasRef.current) {
@@ -89,9 +91,9 @@ export default function Globe({
       onRender,
     });
 
-    setTimeout(() => (canvasRef.current!.style.opacity = "1"));
+    setTimeout(() => (canvasRef.current!.style.opacity = "1"), 0);
     return () => globe.destroy();
-  }, []);
+  }, [config, onRender]);
 
   return (
     <div
