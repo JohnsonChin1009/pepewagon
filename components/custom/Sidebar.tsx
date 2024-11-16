@@ -30,10 +30,13 @@ export default function Sidebar() {
 
         <ul className="text-white font-medium space-y-4 py-12 text-[18px]">
             <li>
-                <Link href="/home/leaderboard">Profile</Link>
+                <Link href="/home">Dashboard</Link>
             </li>
             <li>
-                <Link href="/home/leaderboard">Leaderboard</Link>
+                <Link href="/profile">Profile</Link>
+            </li>
+            <li>
+                <Link href="/leaderboard">Leaderboard</Link>
             </li>
             <li>
                 <Link href="/home/maps">Maps</Link>
