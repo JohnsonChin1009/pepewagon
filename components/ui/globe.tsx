@@ -2,7 +2,6 @@
 
 import createGlobe, { COBEOptions } from "cobe";
 import { useCallback, useEffect, useRef, useState } from "react";
-
 import { cn } from "@/lib/utils";
 
 const GLOBE_CONFIG: COBEOptions = {
@@ -32,6 +31,13 @@ const GLOBE_CONFIG: COBEOptions = {
     { location: [41.0082, 28.9784], size: 0.06 },
   ],
 };
+
+// Define a type for the state
+interface GlobeRenderState {
+  phi: number;
+  width: number;
+  height: number;
+}
 
 export default function Globe({
   className,
@@ -63,16 +69,14 @@ export default function Globe({
   };
 
   const onRender = useCallback(
-    (state: Record<string, any>) => {
-      const typedState = state as { phi: number; width: number; height: number }; // Type casting
+    (state: GlobeRenderState) => {
       if (!pointerInteracting.current) phi += 0.005;
-      typedState.phi = phi + r;
-      typedState.width = width * 2;
-      typedState.height = width * 2;
+      state.phi = phi + r;
+      state.width = width * 2;
+      state.height = width * 2;
     },
     [r],
   );
-  
 
   const onResize = () => {
     if (canvasRef.current) {
@@ -88,7 +92,7 @@ export default function Globe({
       ...config,
       width: width * 2,
       height: width * 2,
-      onRender,
+      onRender: (state: Record<string, any>) => onRender(state as GlobeRenderState), // Type-cast here
     });
 
     setTimeout(() => (canvasRef.current!.style.opacity = "1"), 0);
