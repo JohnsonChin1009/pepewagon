@@ -4,6 +4,7 @@ import HeroText from "@/components/custom/HeroText";
 import Architecture from "@/components/custom/Architecture";
 import Team from "@/components/custom/Team";
 import SparklesText from "@/components/ui/sparkles-text";
+import Globe from "@/components/ui/globe";
 
 export default function HomePage() {
   return (
@@ -12,6 +13,20 @@ export default function HomePage() {
       <section id="hero" className="px-4 lg:px-[100px] py-[60px] lg:py-[100px]">
         <div>
           <HeroText />
+        </div>
+      </section>
+
+      <section id="about" className="relative px-4 lg:px-[100px] py-[60px] lg:py-[100px] text-white">
+        <h2 className="text-[20px] lg:text-[40px] font-bold">about us</h2>
+        <div className="pt-3">
+          <div>
+            Traffic and Street data are all <span className="font-bold">OUTDATED</span>. With pepewagon, we are creating a platform that focuses on incentivizing users based on their contributions to street data.
+          </div>
+
+          <div className="relative mt-8 h-[300px] lg:h-[400px]">
+            {/* Ensure Globe is fully contained within this area */}
+            <Globe />
+          </div>
         </div>
       </section>
 

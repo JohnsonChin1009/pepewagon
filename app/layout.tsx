@@ -7,7 +7,7 @@ const poppins = Poppins({weight: ["400", "500", "600", "700"], subsets: ["latin"
 
 export const metadata: Metadata = {
   title: "pepewagon",
-  description: "Empowering users to capture and train street data while earning rewards",
+  description: "A platform that focuses on incentivizing users based on their contributions to street data",
 };
 
 export default function RootLayout({
