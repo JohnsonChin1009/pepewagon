@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import BoxReveal from "@/components/ui/box-reveal";
 import { MdOutlineSubdirectoryArrowRight } from "react-icons/md";
 import { FaGithub } from "react-icons/fa6";
-
+import Link from "next/link";
 
 export default function HeroText() {
     return (
@@ -21,10 +21,12 @@ export default function HeroText() {
         </BoxReveal>
   
         <BoxReveal boxColor={"#5046e6"} duration={0.5}>
+            <Link href="/home">
           <Button className="mt-[1.6rem] bg-[#5046e6] lg:text-[20px] flex items-center space-x-2">
             <MdOutlineSubdirectoryArrowRight />
             <span>Earn Now</span>
           </Button>
+          </Link>
         </BoxReveal>
 
         <div className="pt-5">
