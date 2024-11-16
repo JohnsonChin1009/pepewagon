@@ -4,14 +4,6 @@ import createGlobe, { type COBEOptions } from "cobe";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
-// Define interfaces that extend the library's types
-interface GlobeState extends Record<string, number> {
-  phi: number;
-  width: number;
-  height: number;
-  dark: number;
-}
-
 interface GlobeProps {
   className?: string;
   config?: Partial<COBEOptions>;
