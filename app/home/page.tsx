@@ -96,8 +96,9 @@ export default function HomePage() {
                 method: 'wallet_switchEthereumChain',
                 params: [{ chainId: SCROLL_SEPOLIA_CONFIG.chainId }],
             });
-        } catch (switchError: any) {
-            if (switchError.code === 4902) {
+        } catch (error: unknown) {
+            // Narrowing the error type
+            if (isErrorWithCode(error) && error.code === 4902) {
                 try {
                     await window.ethereum.request({
                         method: 'wallet_addEthereumChain',
@@ -109,40 +110,65 @@ export default function HomePage() {
                             blockExplorerUrls: SCROLL_SEPOLIA_CONFIG.blockExplorerUrls
                         }],
                     });
-                } catch (addError: any) {
-                    setNetworkError("Failed to add Scroll Sepolia network");
+                } catch (addError: unknown) {
+                    if (isErrorWithMessage(addError)) {
+                        setNetworkError("Failed to add Scroll Sepolia network");
+                    }
                     throw addError;
                 }
-            } else {
+            } else if (isErrorWithMessage(error)) {
                 setNetworkError("Failed to switch to Scroll Sepolia network");
-                throw switchError;
             }
+            throw error;
         }
     };
+    
+    // Type guard to check if the error is an object with a `code` property
+    const isErrorWithCode = (error: unknown): error is { code: number } => {
+        return typeof error === 'object' && error !== null && 'code' in error && typeof (error as any).code === 'number';
+    };
+    
+    // Type guard to check if the error is an object with a `message` property
+    const isErrorWithMessage = (error: unknown): error is { message: string } => {
+        return typeof error === 'object' && error !== null && 'message' in error && typeof (error as any).message === 'string';
+    };
+    
 
     const connectWallet = async () => {
         try {
             if (!window.ethereum) {
                 alert("Please install MetaMask!");
-                return;
+                return null;
             }
-
+    
             await switchToScrollSepolia();
-            
-            const accounts = await window.ethereum.request({ 
-                method: 'eth_requestAccounts' 
-            });
+    
+            // Request accounts
+            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' }) as string[];
+            if (!accounts || accounts.length === 0) {
+                setNetworkError("No accounts found.");
+                return null;
+            }
+    
             const account = accounts[0];
             setCurrentAccount(account);
             setWalletConnected(true);
+    
+            // Load captures and token balance in parallel
             await Promise.all([
                 loadCaptures(),
-                loadTokenBalance()
+                loadTokenBalance(),
             ]);
+    
             return account;
-        } catch (error: any) {
-            console.error("Failed to connect wallet:", error);
-            setNetworkError(error.message);
+        } catch (error: unknown) {
+            if (isErrorWithMessage(error)) {
+                console.error("Failed to connect wallet:", error.message);
+                setNetworkError(error.message);
+            } else {
+                console.error("Failed to connect wallet:", error);
+                setNetworkError("An unknown error occurred.");
+            }
             return null;
         }
     };
@@ -157,50 +183,57 @@ export default function HomePage() {
             setActiveUpload(index);
             setNetworkError("");
             setIsRewardPending(true);
-
+    
             if (!window.ethereum) {
                 throw new Error("Please install MetaMask!");
             }
-
+    
             const provider = await getProvider();
             const signer = await provider.getSigner();
-
-            // Upload capture
+    
+            // Define contracts
             const captureContract = new ethers.Contract(
                 PEPEWAGON_ADDRESS,
                 ["function addCapture(string memory _ipfsHash, int256 _latitude, int256 _longitude) public returns (bytes32)"],
                 signer
             );
-
+    
             const tokenContract = new ethers.Contract(
                 PEPEWAGON_TOKEN_ADDRESS,
                 ["function transfer(address to, uint256 value) public returns (bool)"],
                 signer
             );
-
+    
             const ipfsHash = getIpfsHash(ipfsUrl);
+    
+            // Call the `addCapture` method
             const tx = await captureContract.addCapture(
                 ipfsHash,
                 QSNCC_COORDINATES.contractLatitude,
                 QSNCC_COORDINATES.contractLongitude,
                 { gasLimit: 3000000 }
             );
-
             await tx.wait();
-
-            // Send token reward
+    
+            // Reward the user
             const uploadReward = ethers.utils.parseUnits("50", 18);
             const rewardTx = await tokenContract.transfer(currentAccount, uploadReward);
             await rewardTx.wait();
-
+    
+            // Reload captures and balance
             await Promise.all([
                 loadCaptures(),
                 loadTokenBalance()
             ]);
-
-        } catch (error: any) {
-            console.error("Upload error:", error);
-            setNetworkError(error.message);
+    
+        } catch (error: unknown) {
+            if (isErrorWithMessage(error)) {
+                console.error("Upload error:", error.message);
+                setNetworkError(error.message);
+            } else {
+                console.error("Upload error:", error);
+                setNetworkError("An unknown error occurred during upload.");
+            }
         } finally {
             setLoading(false);
             setActiveUpload(null);
@@ -211,41 +244,50 @@ export default function HomePage() {
     const verifyCapture = async (captureId: string) => {
         try {
             setIsRewardPending(true);
+    
             if (!window.ethereum) {
                 throw new Error("Please install MetaMask!");
             }
-
+    
             const provider = await getProvider();
             const signer = await provider.getSigner();
-
+    
+            // Define the contracts
             const captureContract = new ethers.Contract(
                 PEPEWAGON_ADDRESS,
                 ["function verifyCapture(bytes32 _captureId) public"],
                 signer
             );
-
+    
             const tokenContract = new ethers.Contract(
                 PEPEWAGON_TOKEN_ADDRESS,
                 ["function transfer(address to, uint256 value) public returns (bool)"],
                 signer
             );
-
+    
+            // Interact with the capture contract
             const tx = await captureContract.verifyCapture(captureId, { gasLimit: 3000000 });
             await tx.wait();
-
-            // Send verification reward
+    
+            // Send the verification reward
             const verifyReward = ethers.utils.parseUnits("30", 18);
             const rewardTx = await tokenContract.transfer(currentAccount, verifyReward);
             await rewardTx.wait();
-
+    
+            // Reload captures and token balance
             await Promise.all([
                 loadCaptures(),
-                loadTokenBalance()
+                loadTokenBalance(),
             ]);
-
-        } catch (error: any) {
-            console.error("Verification error:", error);
-            setNetworkError(error.message);
+    
+        } catch (error: unknown) {
+            if (isErrorWithMessage(error)) {
+                console.error("Verification error:", error.message);
+                setNetworkError(error.message);
+            } else {
+                console.error("Verification error:", error);
+                setNetworkError("An unknown error occurred during verification.");
+            }
         } finally {
             setIsRewardPending(false);
         }
