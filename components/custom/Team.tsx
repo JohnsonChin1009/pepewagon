@@ -2,7 +2,7 @@ import Image from "next/image";
 
 export default function Team() {
     return (
-        <div className="flex text-center text-white space-x-10 lg:space-x-20 items-center justify-center">
+        <div className="flex text-center text-white space-x-10 lg:space-x-[120px] items-center justify-center">
             {data.map((item) => (
                 <div key={item.id}>
                     <a href={item.link} target="_blank">
