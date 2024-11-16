@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { Anton_SC } from "next/font/google";
+import { Poppins } from "next/font/google";
 import "./globals.css";
 
-const anton = Anton_SC({weight: ["400"], subsets: ["latin"]});
+const poppins = Poppins({weight: ["400", "500", "600", "700"], subsets: ["latin"]});
 
 
 export const metadata: Metadata = {
@@ -18,7 +18,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${anton.className} antialiased`}
+        className={`${poppins.className} antialiased`}
       >
         {children}
       </body>
