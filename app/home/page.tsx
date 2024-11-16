@@ -5,9 +5,10 @@ import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import Header from "@/components/custom/Header";
 import { CaptureCard } from "@/components/custom/CaptureCard";
-import { Camera, MapPin } from 'lucide-react';
+import { Camera, MapPin, Coins } from 'lucide-react';
 
 const PEPEWAGON_ADDRESS = "0x81E6E2746CDDd8Faa30B859CBF7c62Cdf0deD014";
+const PEPEWAGON_TOKEN_ADDRESS = "0x74bc37d7B2928E9C8e98f9c27c0423ed44b2D52f";
 
 const SCROLL_SEPOLIA_CONFIG = {
     chainId: '0x8274f', // 534351 in hex
@@ -49,7 +50,6 @@ declare global {
     }
 }
 
-// If that doesn't work, we can use this alternative
 const getProvider = () => {
     if (!window.ethereum) throw new Error("MetaMask is not installed");
     return new ethers.providers.Web3Provider(window.ethereum);
@@ -63,6 +63,31 @@ export default function HomePage() {
     const [walletConnected, setWalletConnected] = useState<boolean>(false);
     const [currentAccount, setCurrentAccount] = useState<string>("");
     const [networkError, setNetworkError] = useState<string>("");
+    const [tokenBalance, setTokenBalance] = useState<string>("0");
+    const [isRewardPending, setIsRewardPending] = useState<boolean>(false);
+
+    const loadTokenBalance = async () => {
+        try {
+            if (!window.ethereum || !currentAccount) return;
+
+            const provider = await getProvider();
+            const tokenContract = new ethers.Contract(
+                PEPEWAGON_TOKEN_ADDRESS,
+                [
+                    "function balanceOf(address account) public view returns (uint256)",
+                    "function symbol() public view returns (string)",
+                    "function decimals() public view returns (uint8)"
+                ],
+                provider
+            );
+
+            const balance = await tokenContract.balanceOf(currentAccount);
+            const formattedBalance = ethers.utils.formatUnits(balance, 18);
+            setTokenBalance(formattedBalance);
+        } catch (error) {
+            console.error("Error loading token balance:", error);
+        }
+    };
 
     const switchToScrollSepolia = async () => {
         try {
@@ -110,7 +135,10 @@ export default function HomePage() {
             const account = accounts[0];
             setCurrentAccount(account);
             setWalletConnected(true);
-            await loadCaptures();
+            await Promise.all([
+                loadCaptures(),
+                loadTokenBalance()
+            ]);
             return account;
         } catch (error: any) {
             console.error("Failed to connect wallet:", error);
@@ -128,6 +156,7 @@ export default function HomePage() {
             setLoading(true);
             setActiveUpload(index);
             setNetworkError("");
+            setIsRewardPending(true);
 
             if (!window.ethereum) {
                 throw new Error("Please install MetaMask!");
@@ -135,12 +164,22 @@ export default function HomePage() {
 
             const provider = await getProvider();
             const signer = await provider.getSigner();
-            const contract = new ethers.Contract(PEPEWAGON_ADDRESS, [
-                "function addCapture(string memory _ipfsHash, int256 _latitude, int256 _longitude) public returns (bytes32)"
-            ], signer);
+
+            // Upload capture
+            const captureContract = new ethers.Contract(
+                PEPEWAGON_ADDRESS,
+                ["function addCapture(string memory _ipfsHash, int256 _latitude, int256 _longitude) public returns (bytes32)"],
+                signer
+            );
+
+            const tokenContract = new ethers.Contract(
+                PEPEWAGON_TOKEN_ADDRESS,
+                ["function transfer(address to, uint256 value) public returns (bool)"],
+                signer
+            );
 
             const ipfsHash = getIpfsHash(ipfsUrl);
-            const tx = await contract.addCapture(
+            const tx = await captureContract.addCapture(
                 ipfsHash,
                 QSNCC_COORDINATES.contractLatitude,
                 QSNCC_COORDINATES.contractLongitude,
@@ -148,7 +187,16 @@ export default function HomePage() {
             );
 
             await tx.wait();
-            await loadCaptures();
+
+            // Send token reward
+            const uploadReward = ethers.utils.parseUnits("50", 18);
+            const rewardTx = await tokenContract.transfer(currentAccount, uploadReward);
+            await rewardTx.wait();
+
+            await Promise.all([
+                loadCaptures(),
+                loadTokenBalance()
+            ]);
 
         } catch (error: any) {
             console.error("Upload error:", error);
@@ -156,28 +204,50 @@ export default function HomePage() {
         } finally {
             setLoading(false);
             setActiveUpload(null);
+            setIsRewardPending(false);
         }
     };
 
     const verifyCapture = async (captureId: string) => {
         try {
+            setIsRewardPending(true);
             if (!window.ethereum) {
                 throw new Error("Please install MetaMask!");
             }
 
             const provider = await getProvider();
             const signer = await provider.getSigner();
-            const contract = new ethers.Contract(PEPEWAGON_ADDRESS, [
-                "function verifyCapture(bytes32 _captureId) public"
-            ], signer);
 
-            const tx = await contract.verifyCapture(captureId, { gasLimit: 3000000 });
+            const captureContract = new ethers.Contract(
+                PEPEWAGON_ADDRESS,
+                ["function verifyCapture(bytes32 _captureId) public"],
+                signer
+            );
+
+            const tokenContract = new ethers.Contract(
+                PEPEWAGON_TOKEN_ADDRESS,
+                ["function transfer(address to, uint256 value) public returns (bool)"],
+                signer
+            );
+
+            const tx = await captureContract.verifyCapture(captureId, { gasLimit: 3000000 });
             await tx.wait();
-            await loadCaptures();
+
+            // Send verification reward
+            const verifyReward = ethers.utils.parseUnits("30", 18);
+            const rewardTx = await tokenContract.transfer(currentAccount, verifyReward);
+            await rewardTx.wait();
+
+            await Promise.all([
+                loadCaptures(),
+                loadTokenBalance()
+            ]);
 
         } catch (error: any) {
             console.error("Verification error:", error);
             setNetworkError(error.message);
+        } finally {
+            setIsRewardPending(false);
         }
     };
 
@@ -223,7 +293,6 @@ export default function HomePage() {
 
     useEffect(() => {
         if (window.ethereum) {
-            // Check current network
             window.ethereum.request({ method: 'eth_chainId' })
                 .then((chainId: string) => {
                     if (chainId !== SCROLL_SEPOLIA_CONFIG.chainId) {
@@ -231,14 +300,14 @@ export default function HomePage() {
                     }
                 });
 
-            // Setup event listeners
             window.ethereum.on('accountsChanged', (accounts: string[]) => {
                 if (accounts.length > 0) {
                     setCurrentAccount(accounts[0]);
-                    loadCaptures();
+                    Promise.all([loadCaptures(), loadTokenBalance()]);
                 } else {
                     setWalletConnected(false);
                     setCurrentAccount("");
+                    setTokenBalance("0");
                 }
             });
 
@@ -249,13 +318,12 @@ export default function HomePage() {
                 window.location.reload();
             });
 
-            // Check for existing connection
             window.ethereum.request({ method: 'eth_accounts' })
                 .then((accounts: string[]) => {
                     if (accounts.length > 0) {
                         setCurrentAccount(accounts[0]);
                         setWalletConnected(true);
-                        loadCaptures();
+                        Promise.all([loadCaptures(), loadTokenBalance()]);
                     }
                 });
         }
@@ -292,6 +360,12 @@ export default function HomePage() {
                             <Camera className="h-4 w-4" />
                             <span>{totalCaptures} captures</span>
                         </div>
+                        {walletConnected && (
+                            <div className="flex items-center gap-2">
+                                <Coins className="h-4 w-4" />
+                                <span>{Number(tokenBalance).toLocaleString()} PPWG</span>
+                            </div>
+                        )}
                     </div>
 
                     {!walletConnected ? (
@@ -314,6 +388,25 @@ export default function HomePage() {
                         </div>
                     )}
                 </div>
+
+                {/* Rewards Info */}
+                {walletConnected && (
+                    <div className="mb-8 p-4 bg-blue-50 rounded-lg shadow-sm">
+                        <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                            <Coins className="h-4 w-4" />
+                            Earn PPWG Tokens
+                        </h3>
+                        <div className="space-y-1 text-blue-700">
+                            <p>• 50 PPWG for each upload</p>
+                            <p>• 30 PPWG for each verification</p>
+                        </div>
+                        {isRewardPending && (
+                            <div className="mt-2 text-sm text-blue-600 animate-pulse">
+                                Processing reward...
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Upload Section */}
                 {walletConnected && (
