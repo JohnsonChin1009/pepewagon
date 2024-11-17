@@ -12,6 +12,7 @@ interface CaptureCardProps {
     onUpload?: () => void;
     onVerify?: () => void;
     loading?: boolean;
+    networkTheme?: 'purple' | 'blue' | 'green';  // Added this line
 }
 
 export const CaptureCard: React.FC<CaptureCardProps> = ({

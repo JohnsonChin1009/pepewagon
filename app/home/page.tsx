@@ -1,4 +1,3 @@
-// app/home/page.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -7,19 +6,19 @@ import Header from "@/components/custom/Header";
 import { CaptureCard } from "@/components/custom/CaptureCard";
 import { Camera, MapPin, Coins } from 'lucide-react';
 
-const PEPEWAGON_ADDRESS = "0x81E6E2746CDDd8Faa30B859CBF7c62Cdf0deD014";
-const PEPEWAGON_TOKEN_ADDRESS = "0x74bc37d7B2928E9C8e98f9c27c0423ed44b2D52f";
+const PEPEWAGON_ADDRESS = "0xEC0Bc9D59A187AA5693084657deC06889A8398bD";
+const PEPEWAGON_TOKEN_ADDRESS = "0xAF85A0023fAc623fCE4F20f50BD475C01e6791B1";
 
-const SCROLL_SEPOLIA_CONFIG = {
-    chainId: '0x8274f', // 534351 in hex
-    chainName: 'Scroll Sepolia',
+const FLOW_TESTNET_CONFIG = {
+    chainId: '0x221', // 545 in hex
+    chainName: 'Flow Testnet',
     nativeCurrency: {
-        name: 'Ethereum',
-        symbol: 'ETH',
+        name: 'FLOW',
+        symbol: 'FLOW',
         decimals: 18
     },
-    rpcUrls: ['https://sepolia-rpc.scroll.io'],
-    blockExplorerUrls: ['https://sepolia.scrollscan.com']
+    rpcUrls: ['https://testnet.evm.nodes.onflow.org'],
+    blockExplorerUrls: ['https://evm-testnet.flowscan.io']
 } as const;
 
 const QSNCC_COORDINATES = {
@@ -89,50 +88,46 @@ export default function HomePage() {
         }
     };
 
-    const switchToScrollSepolia = async () => {
+    const isErrorWithCode = (error: unknown): error is { code: number } => {
+        return typeof error === 'object' && error !== null && 'code' in error && typeof (error as any).code === 'number';
+    };
+    
+    const isErrorWithMessage = (error: unknown): error is { message: string } => {
+        return typeof error === 'object' && error !== null && 'message' in error && typeof (error as any).message === 'string';
+    };
+
+    const switchToFlowTestnet = async () => {
         try {
             setNetworkError("");
             await window.ethereum.request({
                 method: 'wallet_switchEthereumChain',
-                params: [{ chainId: SCROLL_SEPOLIA_CONFIG.chainId }],
+                params: [{ chainId: FLOW_TESTNET_CONFIG.chainId }],
             });
         } catch (error: unknown) {
-            // Narrowing the error type
             if (isErrorWithCode(error) && error.code === 4902) {
                 try {
                     await window.ethereum.request({
                         method: 'wallet_addEthereumChain',
                         params: [{
-                            chainId: SCROLL_SEPOLIA_CONFIG.chainId,
-                            chainName: SCROLL_SEPOLIA_CONFIG.chainName,
-                            nativeCurrency: SCROLL_SEPOLIA_CONFIG.nativeCurrency,
-                            rpcUrls: SCROLL_SEPOLIA_CONFIG.rpcUrls,
-                            blockExplorerUrls: SCROLL_SEPOLIA_CONFIG.blockExplorerUrls
+                            chainId: FLOW_TESTNET_CONFIG.chainId,
+                            chainName: FLOW_TESTNET_CONFIG.chainName,
+                            nativeCurrency: FLOW_TESTNET_CONFIG.nativeCurrency,
+                            rpcUrls: FLOW_TESTNET_CONFIG.rpcUrls,
+                            blockExplorerUrls: FLOW_TESTNET_CONFIG.blockExplorerUrls
                         }],
                     });
                 } catch (addError: unknown) {
                     if (isErrorWithMessage(addError)) {
-                        setNetworkError("Failed to add Scroll Sepolia network");
+                        setNetworkError("Failed to add Flow Testnet network");
                     }
                     throw addError;
                 }
             } else if (isErrorWithMessage(error)) {
-                setNetworkError("Failed to switch to Scroll Sepolia network");
+                setNetworkError("Failed to switch to Flow Testnet network");
             }
             throw error;
         }
     };
-    
-    // Type guard to check if the error is an object with a `code` property
-    const isErrorWithCode = (error: unknown): error is { code: number } => {
-        return typeof error === 'object' && error !== null && 'code' in error && typeof (error as any).code === 'number';
-    };
-    
-    // Type guard to check if the error is an object with a `message` property
-    const isErrorWithMessage = (error: unknown): error is { message: string } => {
-        return typeof error === 'object' && error !== null && 'message' in error && typeof (error as any).message === 'string';
-    };
-    
 
     const connectWallet = async () => {
         try {
@@ -141,9 +136,8 @@ export default function HomePage() {
                 return null;
             }
     
-            await switchToScrollSepolia();
+            await switchToFlowTestnet();
     
-            // Request accounts
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' }) as string[];
             if (!accounts || accounts.length === 0) {
                 setNetworkError("No accounts found.");
@@ -154,7 +148,6 @@ export default function HomePage() {
             setCurrentAccount(account);
             setWalletConnected(true);
     
-            // Load captures and token balance in parallel
             await Promise.all([
                 loadCaptures(),
                 loadTokenBalance(),
@@ -177,7 +170,7 @@ export default function HomePage() {
         return url.split('/')[3];
     };
 
-    const uploadToScroll = async (ipfsUrl: string, index: number) => {
+    const uploadToFlow = async (ipfsUrl: string, index: number) => {
         try {
             setLoading(true);
             setActiveUpload(index);
@@ -191,7 +184,6 @@ export default function HomePage() {
             const provider = await getProvider();
             const signer = await provider.getSigner();
     
-            // Define contracts
             const captureContract = new ethers.Contract(
                 PEPEWAGON_ADDRESS,
                 ["function addCapture(string memory _ipfsHash, int256 _latitude, int256 _longitude) public returns (bytes32)"],
@@ -206,7 +198,6 @@ export default function HomePage() {
     
             const ipfsHash = getIpfsHash(ipfsUrl);
     
-            // Call the `addCapture` method
             const tx = await captureContract.addCapture(
                 ipfsHash,
                 QSNCC_COORDINATES.contractLatitude,
@@ -215,12 +206,10 @@ export default function HomePage() {
             );
             await tx.wait();
     
-            // Reward the user
             const uploadReward = ethers.utils.parseUnits("50", 18);
             const rewardTx = await tokenContract.transfer(currentAccount, uploadReward);
             await rewardTx.wait();
     
-            // Reload captures and balance
             await Promise.all([
                 loadCaptures(),
                 loadTokenBalance()
@@ -252,7 +241,6 @@ export default function HomePage() {
             const provider = await getProvider();
             const signer = await provider.getSigner();
     
-            // Define the contracts
             const captureContract = new ethers.Contract(
                 PEPEWAGON_ADDRESS,
                 ["function verifyCapture(bytes32 _captureId) public"],
@@ -265,16 +253,13 @@ export default function HomePage() {
                 signer
             );
     
-            // Interact with the capture contract
             const tx = await captureContract.verifyCapture(captureId, { gasLimit: 3000000 });
             await tx.wait();
     
-            // Send the verification reward
             const verifyReward = ethers.utils.parseUnits("30", 18);
             const rewardTx = await tokenContract.transfer(currentAccount, verifyReward);
             await rewardTx.wait();
     
-            // Reload captures and token balance
             await Promise.all([
                 loadCaptures(),
                 loadTokenBalance(),
@@ -337,8 +322,8 @@ export default function HomePage() {
         if (window.ethereum) {
             window.ethereum.request({ method: 'eth_chainId' })
                 .then((chainId: string) => {
-                    if (chainId !== SCROLL_SEPOLIA_CONFIG.chainId) {
-                        switchToScrollSepolia();
+                    if (chainId !== FLOW_TESTNET_CONFIG.chainId) {
+                        switchToFlowTestnet();
                     }
                 });
 
@@ -354,8 +339,8 @@ export default function HomePage() {
             });
 
             window.ethereum.on('chainChanged', async (chainId: string) => {
-                if (chainId !== SCROLL_SEPOLIA_CONFIG.chainId) {
-                    await switchToScrollSepolia();
+                if (chainId !== FLOW_TESTNET_CONFIG.chainId) {
+                    await switchToFlowTestnet();
                 }
                 window.location.reload();
             });
@@ -414,15 +399,15 @@ export default function HomePage() {
                         <button
                             onClick={connectWallet}
                             className="mt-6 px-6 py-3 bg-blue-500 text-white rounded-lg font-medium
-                                     hover:bg-blue-600 transition-colors duration-200"
+                            hover:bg-blue-600 transition-colors duration-200"
                         >
-                            Connect to Scroll Sepolia
+                            Connect to Flow Testnet
                         </button>
                     ) : (
                         <div className="mt-4 space-y-2">
                             <div className="flex items-center gap-2">
                                 <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                                <span className="text-sm text-gray-500">Connected to Scroll Sepolia</span>
+                                <span className="text-sm text-gray-500">Connected to Flow Testnet</span>
                             </div>
                             <div className="text-sm text-gray-500">
                                 Account: {currentAccount.substring(0, 6)}...{currentAccount.substring(38)}
@@ -463,7 +448,7 @@ export default function HomePage() {
                                     timestamp={new Date().toLocaleString()}
                                     verificationCount={0}
                                     verified={false}
-                                    onUpload={() => uploadToScroll(url, index)}
+                                    onUpload={() => uploadToFlow(url, index)}
                                     loading={loading && activeUpload === index}
                                 />
                             ))}
