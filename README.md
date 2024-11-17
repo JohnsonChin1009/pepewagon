@@ -16,7 +16,6 @@ By incentivizing users when they contribute map data, we are able to turn:
 
 ## Important Links 🔗
 - [Click here](https://pepewagon.vercel.app) for Live Application
-- [Click here]() for Video Recording
 - [Click here](https://www.canva.com/design/DAGWjmLJt9M/aITj-dehZkLfaBQPjF2dnw/view?utm_content=DAGWjmLJt9M&utm_campaign=designshare&utm_medium=link&utm_source=editor) for Pitch Deck
 - [Click here](https://sepolia.scrollscan.com/address/0x74bc37d7B2928E9C8e98f9c27c0423ed44b2D52f) for Verified Scroll Contract 📜
 - [Click here](https://github.com/AqilJaafree/Eth-Global-Bkk-Pepewagon-Scroll-Contract/tree/polygon) for Polygon contracts that we deployed
