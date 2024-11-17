@@ -3,10 +3,12 @@
 
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
+import OpenAI from 'openai';
 import Header from "@/components/custom/Header";
 import { CaptureCard } from "@/components/custom/CaptureCard";
-import { Camera, MapPin, Coins } from 'lucide-react';
+import { Camera, MapPin, Coins, MessageSquare } from 'lucide-react';
 
+// Constants
 const PEPEWAGON_ADDRESS = "0x81E6E2746CDDd8Faa30B859CBF7c62Cdf0deD014";
 const PEPEWAGON_TOKEN_ADDRESS = "0x74bc37d7B2928E9C8e98f9c27c0423ed44b2D52f";
 
@@ -35,6 +37,13 @@ const IPFS_IMAGES = [
     "https://bafybeif2hrkvnkwdvqbtd3gpbq5gdhe6fq4o6fkip2nju5jguomj732v4e.ipfs.w3s.link/pepe10.jpg"
 ] as const;
 
+// Hyperbolic client initialization
+const hyperbolicClient = new OpenAI({
+    apiKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhcWlsamVmZkBnbWFpbC5jb20iLCJpYXQiOjE3MzE3OTg3Njd9.Clld3oC4p4B6QdXRH173_KnVmPA2ps55C20S75vMlaI',
+    baseURL: 'https://api.hyperbolic.xyz/v1'
+});
+
+// Interfaces
 interface Capture {
     id: string;
     ipfsHash: string;
@@ -44,20 +53,39 @@ interface Capture {
     contributor: string;
 }
 
+interface ImageAnalysis {
+    description?: string;
+    error?: string;
+}
+
+interface CaptureWithAnalysis extends Capture {
+    analysis?: ImageAnalysis;
+}
+
 declare global {
     interface Window {
         ethereum?: any;
     }
 }
 
+// Helper functions
 const getProvider = () => {
     if (!window.ethereum) throw new Error("MetaMask is not installed");
     return new ethers.providers.Web3Provider(window.ethereum);
 };
 
+const isErrorWithCode = (error: unknown): error is { code: number } => {
+    return typeof error === 'object' && error !== null && 'code' in error && typeof (error as any).code === 'number';
+};
+
+const isErrorWithMessage = (error: unknown): error is { message: string } => {
+    return typeof error === 'object' && error !== null && 'message' in error && typeof (error as any).message === 'string';
+};
+
 export default function HomePage() {
+    // State management
     const [loading, setLoading] = useState<boolean>(false);
-    const [captures, setCaptures] = useState<Capture[]>([]);
+    const [capturesWithAnalysis, setCapturesWithAnalysis] = useState<CaptureWithAnalysis[]>([]);
     const [totalCaptures, setTotalCaptures] = useState<string>("0");
     const [activeUpload, setActiveUpload] = useState<number | null>(null);
     const [walletConnected, setWalletConnected] = useState<boolean>(false);
@@ -65,30 +93,59 @@ export default function HomePage() {
     const [networkError, setNetworkError] = useState<string>("");
     const [tokenBalance, setTokenBalance] = useState<string>("0");
     const [isRewardPending, setIsRewardPending] = useState<boolean>(false);
+    const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
 
-    const loadTokenBalance = async () => {
-        try {
-            if (!window.ethereum || !currentAccount) return;
+    // Define the interface for the API response
+    interface HyperbolicResponse {
+    content: string;
+    role: string;
+    }
+    // Updated analyzeImage function
+    const analyzeImage = async (imageUrl: string): Promise<ImageAnalysis> => {
+    try {
+        // Create the request body
+        const requestBody = {
+            model: 'meta-llama/Meta-Llama-3-70B-Instruct',
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You are an expert at analyzing images. Provide detailed but concise descriptions.'
+                },
+                {
+                    role: 'user',
+                    content: `Please analyze this image at ${imageUrl} and provide a brief description of its content, style, and notable features.`
+                }
+            ]
+        };
 
-            const provider = await getProvider();
-            const tokenContract = new ethers.Contract(
-                PEPEWAGON_TOKEN_ADDRESS,
-                [
-                    "function balanceOf(address account) public view returns (uint256)",
-                    "function symbol() public view returns (string)",
-                    "function decimals() public view returns (uint8)"
-                ],
-                provider
-            );
+        // Make direct fetch request to Hyperbolic API
+        const response = await fetch('https://api.hyperbolic.xyz/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhcWlsamVmZkBnbWFpbC5jb20iLCJpYXQiOjE3MzE3OTg3Njd9.Clld3oC4p4B6QdXRH173_KnVmPA2ps55C20S75vMlaI`
+            },
+            body: JSON.stringify(requestBody)
+        });
 
-            const balance = await tokenContract.balanceOf(currentAccount);
-            const formattedBalance = ethers.utils.formatUnits(balance, 18);
-            setTokenBalance(formattedBalance);
-        } catch (error) {
-            console.error("Error loading token balance:", error);
+        if (!response.ok) {
+            throw new Error(`API request failed: ${response.statusText}`);
         }
-    };
 
+        const data = await response.json();
+        
+        return {
+            description: data.choices[0].message.content || 'No analysis available'
+        };
+    } catch (error) {
+        console.error('Error analyzing image:', error);
+        return {
+            error: 'Failed to analyze image'
+        };
+    }
+};
+
+    // Network and wallet functions
     const switchToScrollSepolia = async () => {
         try {
             setNetworkError("");
@@ -97,7 +154,6 @@ export default function HomePage() {
                 params: [{ chainId: SCROLL_SEPOLIA_CONFIG.chainId }],
             });
         } catch (error: unknown) {
-            // Narrowing the error type
             if (isErrorWithCode(error) && error.code === 4902) {
                 try {
                     await window.ethereum.request({
@@ -122,17 +178,6 @@ export default function HomePage() {
             throw error;
         }
     };
-    
-    // Type guard to check if the error is an object with a `code` property
-    const isErrorWithCode = (error: unknown): error is { code: number } => {
-        return typeof error === 'object' && error !== null && 'code' in error && typeof (error as any).code === 'number';
-    };
-    
-    // Type guard to check if the error is an object with a `message` property
-    const isErrorWithMessage = (error: unknown): error is { message: string } => {
-        return typeof error === 'object' && error !== null && 'message' in error && typeof (error as any).message === 'string';
-    };
-    
 
     const connectWallet = async () => {
         try {
@@ -140,26 +185,24 @@ export default function HomePage() {
                 alert("Please install MetaMask!");
                 return null;
             }
-    
+
             await switchToScrollSepolia();
-    
-            // Request accounts
+
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' }) as string[];
             if (!accounts || accounts.length === 0) {
                 setNetworkError("No accounts found.");
                 return null;
             }
-    
+
             const account = accounts[0];
             setCurrentAccount(account);
             setWalletConnected(true);
-    
-            // Load captures and token balance in parallel
+
             await Promise.all([
                 loadCaptures(),
                 loadTokenBalance(),
             ]);
-    
+
             return account;
         } catch (error: unknown) {
             if (isErrorWithMessage(error)) {
@@ -173,126 +216,31 @@ export default function HomePage() {
         }
     };
 
-    const getIpfsHash = (url: string): string => {
-        return url.split('/')[3];
-    };
-
-    const uploadToScroll = async (ipfsUrl: string, index: number) => {
+    // Token and balance functions
+    const loadTokenBalance = async () => {
         try {
-            setLoading(true);
-            setActiveUpload(index);
-            setNetworkError("");
-            setIsRewardPending(true);
-    
-            if (!window.ethereum) {
-                throw new Error("Please install MetaMask!");
-            }
-    
+            if (!window.ethereum || !currentAccount) return;
+
             const provider = await getProvider();
-            const signer = await provider.getSigner();
-    
-            // Define contracts
-            const captureContract = new ethers.Contract(
-                PEPEWAGON_ADDRESS,
-                ["function addCapture(string memory _ipfsHash, int256 _latitude, int256 _longitude) public returns (bytes32)"],
-                signer
-            );
-    
             const tokenContract = new ethers.Contract(
                 PEPEWAGON_TOKEN_ADDRESS,
-                ["function transfer(address to, uint256 value) public returns (bool)"],
-                signer
+                [
+                    "function balanceOf(address account) public view returns (uint256)",
+                    "function symbol() public view returns (string)",
+                    "function decimals() public view returns (uint8)"
+                ],
+                provider
             );
-    
-            const ipfsHash = getIpfsHash(ipfsUrl);
-    
-            // Call the `addCapture` method
-            const tx = await captureContract.addCapture(
-                ipfsHash,
-                QSNCC_COORDINATES.contractLatitude,
-                QSNCC_COORDINATES.contractLongitude,
-                { gasLimit: 3000000 }
-            );
-            await tx.wait();
-    
-            // Reward the user
-            const uploadReward = ethers.utils.parseUnits("50", 18);
-            const rewardTx = await tokenContract.transfer(currentAccount, uploadReward);
-            await rewardTx.wait();
-    
-            // Reload captures and balance
-            await Promise.all([
-                loadCaptures(),
-                loadTokenBalance()
-            ]);
-    
-        } catch (error: unknown) {
-            if (isErrorWithMessage(error)) {
-                console.error("Upload error:", error.message);
-                setNetworkError(error.message);
-            } else {
-                console.error("Upload error:", error);
-                setNetworkError("An unknown error occurred during upload.");
-            }
-        } finally {
-            setLoading(false);
-            setActiveUpload(null);
-            setIsRewardPending(false);
+
+            const balance = await tokenContract.balanceOf(currentAccount);
+            const formattedBalance = ethers.utils.formatUnits(balance, 18);
+            setTokenBalance(formattedBalance);
+        } catch (error) {
+            console.error("Error loading token balance:", error);
         }
     };
 
-    const verifyCapture = async (captureId: string) => {
-        try {
-            setIsRewardPending(true);
-    
-            if (!window.ethereum) {
-                throw new Error("Please install MetaMask!");
-            }
-    
-            const provider = await getProvider();
-            const signer = await provider.getSigner();
-    
-            // Define the contracts
-            const captureContract = new ethers.Contract(
-                PEPEWAGON_ADDRESS,
-                ["function verifyCapture(bytes32 _captureId) public"],
-                signer
-            );
-    
-            const tokenContract = new ethers.Contract(
-                PEPEWAGON_TOKEN_ADDRESS,
-                ["function transfer(address to, uint256 value) public returns (bool)"],
-                signer
-            );
-    
-            // Interact with the capture contract
-            const tx = await captureContract.verifyCapture(captureId, { gasLimit: 3000000 });
-            await tx.wait();
-    
-            // Send the verification reward
-            const verifyReward = ethers.utils.parseUnits("30", 18);
-            const rewardTx = await tokenContract.transfer(currentAccount, verifyReward);
-            await rewardTx.wait();
-    
-            // Reload captures and token balance
-            await Promise.all([
-                loadCaptures(),
-                loadTokenBalance(),
-            ]);
-    
-        } catch (error: unknown) {
-            if (isErrorWithMessage(error)) {
-                console.error("Verification error:", error.message);
-                setNetworkError(error.message);
-            } else {
-                console.error("Verification error:", error);
-                setNetworkError("An unknown error occurred during verification.");
-            }
-        } finally {
-            setIsRewardPending(false);
-        }
-    };
-
+    // Capture management functions
     const loadCaptures = async () => {
         try {
             setNetworkError("");
@@ -321,18 +269,140 @@ export default function HomePage() {
                         verificationCount: Number(capture.verificationCount),
                         verified: capture.verified,
                         contributor: capture.contributor
-                    } as Capture;
+                    } as CaptureWithAnalysis;
                 })
             );
 
-            setCaptures(capturesData.reverse());
-
+            setIsAnalyzing(true);
+            const analyzedCaptures = await Promise.all(
+                capturesData.map(async (capture) => {
+                    const imageUrl = `https://ipfs.io/ipfs/${capture.ipfsHash}`;
+                    const analysis = await analyzeImage(imageUrl);
+                    return {
+                        ...capture,
+                        analysis
+                    };
+                })
+            );
+    
+            setCapturesWithAnalysis(analyzedCaptures.reverse());
+            setIsAnalyzing(false);
+    
         } catch (error: any) {
             console.error("Error loading captures:", error);
             setNetworkError(error.message);
         }
     };
 
+    const uploadToScroll = async (ipfsUrl: string, index: number) => {
+        try {
+            setLoading(true);
+            setActiveUpload(index);
+            setNetworkError("");
+            setIsRewardPending(true);
+
+            if (!window.ethereum) {
+                throw new Error("Please install MetaMask!");
+            }
+
+            const provider = await getProvider();
+            const signer = await provider.getSigner();
+
+            const captureContract = new ethers.Contract(
+                PEPEWAGON_ADDRESS,
+                ["function addCapture(string memory _ipfsHash, int256 _latitude, int256 _longitude) public returns (bytes32)"],
+                signer
+            );
+
+            const tokenContract = new ethers.Contract(
+                PEPEWAGON_TOKEN_ADDRESS,
+                ["function transfer(address to, uint256 value) public returns (bool)"],
+                signer
+            );
+
+            const ipfsHash = ipfsUrl.split('/')[3];
+
+            const tx = await captureContract.addCapture(
+                ipfsHash,
+                QSNCC_COORDINATES.contractLatitude,
+                QSNCC_COORDINATES.contractLongitude,
+                { gasLimit: 3000000 }
+            );
+            await tx.wait();
+
+            const uploadReward = ethers.utils.parseUnits("50", 18);
+            const rewardTx = await tokenContract.transfer(currentAccount, uploadReward);
+            await rewardTx.wait();
+
+            await Promise.all([
+                loadCaptures(),
+                loadTokenBalance()
+            ]);
+
+        } catch (error: unknown) {
+            if (isErrorWithMessage(error)) {
+                console.error("Upload error:", error.message);
+                setNetworkError(error.message);
+            } else {
+                console.error("Upload error:", error);
+                setNetworkError("An unknown error occurred during upload.");
+            }
+        } finally {
+            setLoading(false);
+            setActiveUpload(null);
+            setIsRewardPending(false);
+        }
+    };
+
+    const verifyCapture = async (captureId: string) => {
+        try {
+            setIsRewardPending(true);
+
+            if (!window.ethereum) {
+                throw new Error("Please install MetaMask!");
+            }
+
+            const provider = await getProvider();
+            const signer = await provider.getSigner();
+
+            const captureContract = new ethers.Contract(
+                PEPEWAGON_ADDRESS,
+                ["function verifyCapture(bytes32 _captureId) public"],
+                signer
+            );
+
+            const tokenContract = new ethers.Contract(
+                PEPEWAGON_TOKEN_ADDRESS,
+                ["function transfer(address to, uint256 value) public returns (bool)"],
+                signer
+            );
+
+            const tx = await captureContract.verifyCapture(captureId, { gasLimit: 3000000 });
+            await tx.wait();
+
+            const verifyReward = ethers.utils.parseUnits("30", 18);
+            const rewardTx = await tokenContract.transfer(currentAccount, verifyReward);
+            await rewardTx.wait();
+
+            await Promise.all([
+                loadCaptures(),
+                loadTokenBalance(),
+            ]);
+
+        } catch (error: unknown) {
+            if (isErrorWithMessage(error)) {
+                console.error("Verification error:", error.message);
+                setNetworkError(error.message);
+            } else {
+                console.error("Verification error:", error);
+                setNetworkError("An unknown error occurred during verification.");
+            }
+        } finally {
+            setIsRewardPending(false);
+        }
+    };
+
+    // Effect hooks
     useEffect(() => {
         if (window.ethereum) {
             window.ethereum.request({ method: 'eth_chainId' })
@@ -378,6 +448,93 @@ export default function HomePage() {
         };
     }, []);
 
+    // CaptureCard Component
+    const CaptureCardWithAnalysis = ({ 
+        imageUrl, 
+        title, 
+        timestamp, 
+        verificationCount, 
+        verified, 
+        contributor, 
+        analysis,
+        onUpload,
+        onVerify,
+        loading 
+    }: {
+        imageUrl: string;
+        title: string;
+        timestamp: string;
+        verificationCount: number;
+        verified: boolean;
+        contributor?: string;
+        analysis?: ImageAnalysis;
+        onUpload?: () => void;
+        onVerify?: () => void;
+        loading?: boolean;
+    }) => {
+        return (
+            <div className="bg-white rounded-lg shadow-md overflow-hidden">
+                <div className="relative aspect-video">
+                    <img src={imageUrl} alt={title} className="w-full h-full object-cover" />
+                </div>
+                <div className="p-4">
+                    <h3 className="font-semibold text-gray-900">{title}</h3>
+                    <p className="text-sm text-gray-500 mt-1">{timestamp}</p>
+                    
+                    {analysis && (
+                        <div className="mt-3 p-3 bg-gray-50 rounded-md">
+                            <div className="flex items-start gap-2">
+                                <MessageSquare className="h-4 w-4 text-gray-400 mt-1" />
+                                <p className="text-sm text-gray-600">
+                                    {analysis.description || analysis.error}
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
+                    {contributor && (
+                        <p className="text-sm text-gray-500 mt-2">
+                            By: {contributor.substring(0, 6)}...{contributor.substring(38)}
+                        </p>
+                    )}
+
+                    <div className="mt-4 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full ${verified ? 'bg-green-500' : 'bg-gray-300'}`} />
+                            <span className="text-sm text-gray-500">
+                                {verificationCount} verification{verificationCount !== 1 ? 's' : ''}
+                            </span>
+                        </div>
+                        
+                        {onUpload && (
+                            <button
+                                onClick={onUpload}
+                                disabled={loading}
+                                className={`px-4 py-2 text-sm font-medium rounded-md ${
+                                    loading
+                                        ? 'bg-gray-200 text-gray-400'
+                                        : 'bg-blue-500 text-white hover:bg-blue-600'
+                                }`}
+                            >
+                                {loading ? 'Uploading...' : 'Upload'}
+                            </button>
+                        )}
+                        
+                        {onVerify && !verified && (
+                            <button
+                                onClick={onVerify}
+                                className="px-4 py-2 text-sm font-medium bg-green-500 text-white rounded-md hover:bg-green-600"
+                            >
+                                Verify
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // Main render
     return (
         <div className="min-h-screen bg-gray-50">
             <Header />
@@ -456,7 +613,7 @@ export default function HomePage() {
                         <h2 className="text-2xl font-semibold text-gray-900 mb-6">New Captures</h2>
                         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                             {IPFS_IMAGES.map((url, index) => (
-                                <CaptureCard
+                                <CaptureCardWithAnalysis
                                     key={index}
                                     imageUrl={url}
                                     title={`Pepe Capture ${index + 1}`}
@@ -472,12 +629,19 @@ export default function HomePage() {
                 )}
 
                 {/* Recent Captures */}
-                {captures.length > 0 && (
+                {capturesWithAnalysis.length > 0 && (
                     <div className="mb-12">
-                        <h2 className="text-2xl font-semibold text-gray-900 mb-6">Recent Captures</h2>
+                        <h2 className="text-2xl font-semibold text-gray-900 mb-6">
+                            Recent Captures
+                            {isAnalyzing && (
+                                <span className="ml-2 text-sm text-gray-500 animate-pulse">
+                                    Analyzing images...
+                                </span>
+                            )}
+                        </h2>
                         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                            {captures.map((capture) => (
-                                <CaptureCard
+                            {capturesWithAnalysis.map((capture) => (
+                                <CaptureCardWithAnalysis
                                     key={capture.id}
                                     imageUrl={`https://ipfs.io/ipfs/${capture.ipfsHash}`}
                                     title="Verified Capture"
@@ -485,6 +649,7 @@ export default function HomePage() {
                                     verificationCount={capture.verificationCount}
                                     verified={capture.verified}
                                     contributor={capture.contributor}
+                                    analysis={capture.analysis}
                                     onVerify={() => verifyCapture(capture.id)}
                                 />
                             ))}
@@ -493,7 +658,7 @@ export default function HomePage() {
                 )}
 
                 {/* Empty State */}
-                {captures.length === 0 && walletConnected && (
+                {capturesWithAnalysis.length === 0 && walletConnected && (
                     <div className="text-center py-20">
                         <Camera className="mx-auto h-12 w-12 text-gray-400" />
                         <h3 className="mt-4 text-lg font-semibold text-gray-900">No captures yet</h3>
