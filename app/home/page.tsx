@@ -4,11 +4,12 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import Header from "@/components/custom/Header";
-import { CaptureCard } from "@/components/custom/CaptureCard";
-import { Camera, MapPin, Coins } from 'lucide-react';
+import { Camera, MapPin, Coins, MessageSquare } from 'lucide-react';
 
+// Constants
 const PEPEWAGON_ADDRESS = "0x81E6E2746CDDd8Faa30B859CBF7c62Cdf0deD014";
 const PEPEWAGON_TOKEN_ADDRESS = "0x74bc37d7B2928E9C8e98f9c27c0423ed44b2D52f";
+const HYPERBOLIC_API_KEY = '';
 
 const SCROLL_SEPOLIA_CONFIG = {
     chainId: '0x8274f', // 534351 in hex
@@ -35,6 +36,7 @@ const IPFS_IMAGES = [
     "https://bafybeif2hrkvnkwdvqbtd3gpbq5gdhe6fq4o6fkip2nju5jguomj732v4e.ipfs.w3s.link/pepe10.jpg"
 ] as const;
 
+// Interfaces
 interface Capture {
     id: string;
     ipfsHash: string;
@@ -44,20 +46,242 @@ interface Capture {
     contributor: string;
 }
 
+interface ImageAnalysis {
+    description?: string;
+    details?: {
+        objects?: string[];
+        colors?: string[];
+        text?: string;
+        sentiment?: string;
+    };
+    error?: string;
+}
+
+interface CaptureWithAnalysis extends Capture {
+    analysis?: ImageAnalysis;
+}
+
 declare global {
     interface Window {
         ethereum?: any;
     }
 }
 
+// Helper functions
 const getProvider = () => {
     if (!window.ethereum) throw new Error("MetaMask is not installed");
     return new ethers.providers.Web3Provider(window.ethereum);
 };
 
+const isErrorWithCode = (error: unknown): error is { code: number } => {
+    return typeof error === 'object' && error !== null && 'code' in error && typeof (error as any).code === 'number';
+};
+
+const isErrorWithMessage = (error: unknown): error is { message: string } => {
+    return typeof error === 'object' && error !== null && 'message' in error && typeof (error as any).message === 'string';
+};
+
+// Image Analysis Function
+const analyzeImage = async (imageUrl: string): Promise<ImageAnalysis> => {
+    try {
+        // First try to load the image to validate URL
+        await fetch(imageUrl, { method: 'HEAD' });
+
+        // Make the analysis request
+        const response = await fetch('https://api.hyperbolic.xyz/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${HYPERBOLIC_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: 'meta-llama/Meta-Llama-3-70B-Instruct',
+                messages: [
+                    {
+                        role: 'system',
+                        content: `You are an expert image analyzer. 
+                                 Analyze images for: main objects, colors, text if any, and overall sentiment. 
+                                 Provide structured analysis in a clear, concise format.`
+                    },
+                    {
+                        role: 'user',
+                        content: `Please analyze the image at: ${imageUrl}
+                                 Provide: 
+                                 1. Brief description
+                                 2. Main objects detected
+                                 3. Dominant colors
+                                 4. Any text present
+                                 5. Overall sentiment/mood`
+                    }
+                ],
+                temperature: 0.7,
+                max_tokens: 300
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`API request failed: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        const content = data.choices[0].message.content;
+
+        // Parse the structured response
+        const analysis: ImageAnalysis = {
+            description: '',
+            details: {
+                objects: [],
+                colors: [],
+                text: '',
+                sentiment: ''
+            }
+        };
+
+        // Simple parsing of the response
+        const sections = content.split('\n');
+        sections.forEach((section: string) => {
+            if (section.toLowerCase().includes('description')) {
+                analysis.description = section.split(':')[1]?.trim();
+            } else if (section.toLowerCase().includes('objects')) {
+                analysis.details!.objects = section.split(':')[1]?.split(',').map(item => item.trim());
+            } else if (section.toLowerCase().includes('colors')) {
+                analysis.details!.colors = section.split(':')[1]?.split(',').map(item => item.trim());
+            } else if (section.toLowerCase().includes('text')) {
+                analysis.details!.text = section.split(':')[1]?.trim();
+            } else if (section.toLowerCase().includes('sentiment')) {
+                analysis.details!.sentiment = section.split(':')[1]?.trim();
+            }
+        });
+
+        return analysis;
+    } catch (error) {
+        console.error('Error analyzing image:', error);
+        return {
+            error: 'Failed to analyze image'
+        };
+    }
+};
+
+// CaptureCard Component
+const CaptureCardWithAnalysis = ({ 
+    imageUrl, 
+    title, 
+    timestamp, 
+    verificationCount, 
+    verified, 
+    contributor, 
+    analysis,
+    onUpload,
+    onVerify,
+    loading 
+}: {
+    imageUrl: string;
+    title: string;
+    timestamp: string;
+    verificationCount: number;
+    verified: boolean;
+    contributor?: string;
+    analysis?: ImageAnalysis;
+    onUpload?: () => void;
+    onVerify?: () => void;
+    loading?: boolean;
+}) => {
+    return (
+        <div className="bg-white rounded-lg shadow-md overflow-hidden">
+            <div className="relative aspect-video">
+                <img src={imageUrl} alt={title} className="w-full h-full object-cover" />
+            </div>
+            <div className="p-4">
+                <h3 className="font-semibold text-gray-900">{title}</h3>
+                <p className="text-sm text-gray-500 mt-1">{timestamp}</p>
+                
+                {/* Analysis Display */}
+                {analysis && !analysis.error && (
+                    <div className="mt-3 p-3 bg-gray-50 rounded-md">
+                        {analysis.description && (
+                            <div className="mb-2">
+                                <p className="text-sm text-gray-600">{analysis.description}</p>
+                            </div>
+                        )}
+                        {analysis.details && (
+                            <div className="space-y-1 text-xs text-gray-500">
+                                {analysis.details.objects && analysis.details.objects.length > 0 && (
+                                    <div className="flex gap-1 flex-wrap">
+                                        {analysis.details.objects.map((obj, i) => (
+                                            <span key={i} className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full">
+                                                {obj}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                                {analysis.details.colors && analysis.details.colors.length > 0 && (
+                                    <div className="flex gap-1 flex-wrap mt-2">
+                                        {analysis.details.colors.map((color, i) => (
+                                            <span key={i} className="px-2 py-1 bg-gray-100 text-gray-700 rounded-full">
+                                                {color}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                                {analysis.details.text && (
+                                    <p className="mt-2 italic">"{analysis.details.text}"</p>
+                                )}
+                                {analysis.details.sentiment && (
+                                    <p className="mt-2 text-right text-gray-600">
+                                        Mood: {analysis.details.sentiment}
+                                    </p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+                {analysis?.error && (
+                    <div className="mt-3 p-3 bg-red-50 rounded-md">
+                        <p className="text-sm text-red-600">{analysis.error}</p>
+                    </div>
+                )}
+
+                <div className="mt-4 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${verified ? 'bg-green-500' : 'bg-gray-300'}`} />
+                        <span className="text-sm text-gray-500">
+                            {verificationCount} verification{verificationCount !== 1 ? 's' : ''}
+                        </span>
+                    </div>
+                    
+                    {onUpload && (
+                        <button
+                            onClick={onUpload}
+                            disabled={loading}
+                            className={`px-4 py-2 text-sm font-medium rounded-md ${
+                                loading
+                                    ? 'bg-gray-200 text-gray-400'
+                                    : 'bg-blue-500 text-white hover:bg-blue-600'
+                            }`}
+                        >
+                            {loading ? 'Uploading...' : 'Upload'}
+                        </button>
+                    )}
+                    
+                    {onVerify && !verified && (
+                        <button
+                            onClick={onVerify}
+                            className="px-4 py-2 text-sm font-medium bg-green-500 text-white rounded-md hover:bg-green-600"
+                        >
+                            Verify
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// Main HomePage Component
 export default function HomePage() {
+    // State management
     const [loading, setLoading] = useState<boolean>(false);
-    const [captures, setCaptures] = useState<Capture[]>([]);
+    const [capturesWithAnalysis, setCapturesWithAnalysis] = useState<CaptureWithAnalysis[]>([]);
     const [totalCaptures, setTotalCaptures] = useState<string>("0");
     const [activeUpload, setActiveUpload] = useState<number | null>(null);
     const [walletConnected, setWalletConnected] = useState<boolean>(false);
@@ -65,30 +289,9 @@ export default function HomePage() {
     const [networkError, setNetworkError] = useState<string>("");
     const [tokenBalance, setTokenBalance] = useState<string>("0");
     const [isRewardPending, setIsRewardPending] = useState<boolean>(false);
+    const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
 
-    const loadTokenBalance = async () => {
-        try {
-            if (!window.ethereum || !currentAccount) return;
-
-            const provider = await getProvider();
-            const tokenContract = new ethers.Contract(
-                PEPEWAGON_TOKEN_ADDRESS,
-                [
-                    "function balanceOf(address account) public view returns (uint256)",
-                    "function symbol() public view returns (string)",
-                    "function decimals() public view returns (uint8)"
-                ],
-                provider
-            );
-
-            const balance = await tokenContract.balanceOf(currentAccount);
-            const formattedBalance = ethers.utils.formatUnits(balance, 18);
-            setTokenBalance(formattedBalance);
-        } catch (error) {
-            console.error("Error loading token balance:", error);
-        }
-    };
-
+    // Network and wallet functions
     const switchToScrollSepolia = async () => {
         try {
             setNetworkError("");
@@ -97,7 +300,6 @@ export default function HomePage() {
                 params: [{ chainId: SCROLL_SEPOLIA_CONFIG.chainId }],
             });
         } catch (error: unknown) {
-            // Narrowing the error type
             if (isErrorWithCode(error) && error.code === 4902) {
                 try {
                     await window.ethereum.request({
@@ -122,17 +324,6 @@ export default function HomePage() {
             throw error;
         }
     };
-    
-    // Type guard to check if the error is an object with a `code` property
-    const isErrorWithCode = (error: unknown): error is { code: number } => {
-        return typeof error === 'object' && error !== null && 'code' in error && typeof (error as any).code === 'number';
-    };
-    
-    // Type guard to check if the error is an object with a `message` property
-    const isErrorWithMessage = (error: unknown): error is { message: string } => {
-        return typeof error === 'object' && error !== null && 'message' in error && typeof (error as any).message === 'string';
-    };
-    
 
     const connectWallet = async () => {
         try {
@@ -140,26 +331,24 @@ export default function HomePage() {
                 alert("Please install MetaMask!");
                 return null;
             }
-    
+
             await switchToScrollSepolia();
-    
-            // Request accounts
+
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' }) as string[];
             if (!accounts || accounts.length === 0) {
                 setNetworkError("No accounts found.");
                 return null;
             }
-    
+
             const account = accounts[0];
             setCurrentAccount(account);
             setWalletConnected(true);
-    
-            // Load captures and token balance in parallel
+
             await Promise.all([
                 loadCaptures(),
                 loadTokenBalance(),
             ]);
-    
+
             return account;
         } catch (error: unknown) {
             if (isErrorWithMessage(error)) {
@@ -173,8 +362,86 @@ export default function HomePage() {
         }
     };
 
-    const getIpfsHash = (url: string): string => {
-        return url.split('/')[3];
+    // Token and balance functions
+    const loadTokenBalance = async () => {
+        try {
+            if (!window.ethereum || !currentAccount) return;
+
+            const provider = await getProvider();
+            const tokenContract = new ethers.Contract(
+                PEPEWAGON_TOKEN_ADDRESS,
+                [
+                    "function balanceOf(address account) public view returns (uint256)",
+                    "function symbol() public view returns (string)",
+                    "function decimals() public view returns (uint8)"
+                ],
+                provider
+            );
+
+            const balance = await tokenContract.balanceOf(currentAccount);
+            const formattedBalance = ethers.utils.formatUnits(balance, 18);
+            setTokenBalance(formattedBalance);
+        } catch (error) {
+            console.error("Error loading token balance:", error);
+        }
+    };
+
+    // Capture management functions
+    const loadCaptures = async () => {
+        try {
+            setNetworkError("");
+            if (!window.ethereum) return;
+
+            const provider = await getProvider();
+            const contract = new ethers.Contract(
+                PEPEWAGON_ADDRESS,
+                [
+                    "function totalCaptures() public view returns (uint256)",
+                    "function captures(bytes32) public view returns (string memory ipfsHash, uint256 timestamp, int256 latitude, int256 longitude, address contributor, bool verified, uint256 verificationCount)",
+                    "event NewCapture(bytes32 indexed captureId, string ipfsHash, int256 latitude, int256 longitude, address indexed contributor)"
+                ],
+                provider
+            );
+
+            const total = await contract.totalCaptures();
+            setTotalCaptures(total.toString());
+
+            const filter = contract.filters.NewCapture();
+            const events = await contract.queryFilter(filter);
+
+            const capturesData = await Promise.all(
+                events.map(async (event: any) => {
+                    const capture = await contract.captures(event.args?.captureId);
+                    return {
+                        id: event.args?.captureId,
+                        ipfsHash: capture.ipfsHash,
+                        timestamp: new Date(Number(capture.timestamp) * 1000).toLocaleString(),
+                        verificationCount: Number(capture.verificationCount),
+                        verified: capture.verified,
+                        contributor: capture.contributor
+                    } as CaptureWithAnalysis;
+                })
+            );
+
+            setIsAnalyzing(true);
+            const analyzedCaptures = await Promise.all(
+                capturesData.map(async (capture) => {
+                    const imageUrl = `https://ipfs.io/ipfs/${capture.ipfsHash}`;
+                    const analysis = await analyzeImage(imageUrl);
+                    return {
+                        ...capture,
+                        analysis
+                    };
+                })
+            );
+
+            setCapturesWithAnalysis(analyzedCaptures.reverse());
+            setIsAnalyzing(false);
+
+        } catch (error: any) {
+            console.error("Error loading captures:", error);
+            setNetworkError(error.message);
+        }
     };
 
     const uploadToScroll = async (ipfsUrl: string, index: number) => {
@@ -183,30 +450,28 @@ export default function HomePage() {
             setActiveUpload(index);
             setNetworkError("");
             setIsRewardPending(true);
-    
+
             if (!window.ethereum) {
                 throw new Error("Please install MetaMask!");
             }
-    
+
             const provider = await getProvider();
-            const signer = await provider.getSigner();
-    
-            // Define contracts
+            const signer = provider.getSigner();
+
             const captureContract = new ethers.Contract(
                 PEPEWAGON_ADDRESS,
                 ["function addCapture(string memory _ipfsHash, int256 _latitude, int256 _longitude) public returns (bytes32)"],
                 signer
             );
-    
+
             const tokenContract = new ethers.Contract(
                 PEPEWAGON_TOKEN_ADDRESS,
                 ["function transfer(address to, uint256 value) public returns (bool)"],
                 signer
             );
-    
-            const ipfsHash = getIpfsHash(ipfsUrl);
-    
-            // Call the `addCapture` method
+
+            const ipfsHash = ipfsUrl.split('/')[3];
+
             const tx = await captureContract.addCapture(
                 ipfsHash,
                 QSNCC_COORDINATES.contractLatitude,
@@ -214,18 +479,16 @@ export default function HomePage() {
                 { gasLimit: 3000000 }
             );
             await tx.wait();
-    
-            // Reward the user
+
             const uploadReward = ethers.utils.parseUnits("50", 18);
             const rewardTx = await tokenContract.transfer(currentAccount, uploadReward);
             await rewardTx.wait();
-    
-            // Reload captures and balance
+
             await Promise.all([
                 loadCaptures(),
                 loadTokenBalance()
             ]);
-    
+
         } catch (error: unknown) {
             if (isErrorWithMessage(error)) {
                 console.error("Upload error:", error.message);
@@ -244,42 +507,38 @@ export default function HomePage() {
     const verifyCapture = async (captureId: string) => {
         try {
             setIsRewardPending(true);
-    
+
             if (!window.ethereum) {
                 throw new Error("Please install MetaMask!");
             }
-    
+
             const provider = await getProvider();
-            const signer = await provider.getSigner();
-    
-            // Define the contracts
+            const signer = provider.getSigner();
+
             const captureContract = new ethers.Contract(
                 PEPEWAGON_ADDRESS,
                 ["function verifyCapture(bytes32 _captureId) public"],
                 signer
             );
-    
+
             const tokenContract = new ethers.Contract(
                 PEPEWAGON_TOKEN_ADDRESS,
                 ["function transfer(address to, uint256 value) public returns (bool)"],
                 signer
             );
-    
-            // Interact with the capture contract
+
             const tx = await captureContract.verifyCapture(captureId, { gasLimit: 3000000 });
             await tx.wait();
-    
-            // Send the verification reward
+
             const verifyReward = ethers.utils.parseUnits("30", 18);
             const rewardTx = await tokenContract.transfer(currentAccount, verifyReward);
             await rewardTx.wait();
-    
-            // Reload captures and token balance
+
             await Promise.all([
                 loadCaptures(),
                 loadTokenBalance(),
             ]);
-    
+
         } catch (error: unknown) {
             if (isErrorWithMessage(error)) {
                 console.error("Verification error:", error.message);
@@ -293,46 +552,7 @@ export default function HomePage() {
         }
     };
 
-    const loadCaptures = async () => {
-        try {
-            setNetworkError("");
-            if (!window.ethereum) return;
-
-            const provider = await getProvider();
-            const contract = new ethers.Contract(PEPEWAGON_ADDRESS, [
-                "function totalCaptures() public view returns (uint256)",
-                "function captures(bytes32) public view returns (string memory ipfsHash, uint256 timestamp, int256 latitude, int256 longitude, address contributor, bool verified, uint256 verificationCount)",
-                "event NewCapture(bytes32 indexed captureId, string ipfsHash, int256 latitude, int256 longitude, address indexed contributor)"
-            ], provider);
-
-            const total = await contract.totalCaptures();
-            setTotalCaptures(total.toString());
-
-            const filter = contract.filters.NewCapture();
-            const events = await contract.queryFilter(filter);
-
-            const capturesData = await Promise.all(
-                events.map(async (event: any) => {
-                    const capture = await contract.captures(event.args?.captureId);
-                    return {
-                        id: event.args?.captureId,
-                        ipfsHash: capture.ipfsHash,
-                        timestamp: new Date(Number(capture.timestamp) * 1000).toLocaleString(),
-                        verificationCount: Number(capture.verificationCount),
-                        verified: capture.verified,
-                        contributor: capture.contributor
-                    } as Capture;
-                })
-            );
-
-            setCaptures(capturesData.reverse());
-
-        } catch (error: any) {
-            console.error("Error loading captures:", error);
-            setNetworkError(error.message);
-        }
-    };
-
+    // Effect hooks
     useEffect(() => {
         if (window.ethereum) {
             window.ethereum.request({ method: 'eth_chainId' })
@@ -378,6 +598,7 @@ export default function HomePage() {
         };
     }, []);
 
+    // Render UI
     return (
         <div className="min-h-screen bg-gray-50">
             <Header />
@@ -456,7 +677,7 @@ export default function HomePage() {
                         <h2 className="text-2xl font-semibold text-gray-900 mb-6">New Captures</h2>
                         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                             {IPFS_IMAGES.map((url, index) => (
-                                <CaptureCard
+                                <CaptureCardWithAnalysis
                                     key={index}
                                     imageUrl={url}
                                     title={`Pepe Capture ${index + 1}`}
@@ -472,12 +693,19 @@ export default function HomePage() {
                 )}
 
                 {/* Recent Captures */}
-                {captures.length > 0 && (
+                {capturesWithAnalysis.length > 0 && (
                     <div className="mb-12">
-                        <h2 className="text-2xl font-semibold text-gray-900 mb-6">Recent Captures</h2>
+                        <h2 className="text-2xl font-semibold text-gray-900 mb-6">
+                            Recent Captures
+                            {isAnalyzing && (
+                                <span className="ml-2 text-sm text-gray-500 animate-pulse">
+                                    Analyzing images...
+                                </span>
+                            )}
+                        </h2>
                         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                            {captures.map((capture) => (
-                                <CaptureCard
+                            {capturesWithAnalysis.map((capture) => (
+                                <CaptureCardWithAnalysis
                                     key={capture.id}
                                     imageUrl={`https://ipfs.io/ipfs/${capture.ipfsHash}`}
                                     title="Verified Capture"
@@ -485,6 +713,7 @@ export default function HomePage() {
                                     verificationCount={capture.verificationCount}
                                     verified={capture.verified}
                                     contributor={capture.contributor}
+                                    analysis={capture.analysis}
                                     onVerify={() => verifyCapture(capture.id)}
                                 />
                             ))}
@@ -493,7 +722,7 @@ export default function HomePage() {
                 )}
 
                 {/* Empty State */}
-                {captures.length === 0 && walletConnected && (
+                {capturesWithAnalysis.length === 0 && walletConnected && (
                     <div className="text-center py-20">
                         <Camera className="mx-auto h-12 w-12 text-gray-400" />
                         <h3 className="mt-4 text-lg font-semibold text-gray-900">No captures yet</h3>
